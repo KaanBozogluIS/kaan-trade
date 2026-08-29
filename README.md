@@ -435,6 +435,9 @@ Botu **durdurmak** için terminalde `Ctrl + C` tuşlarına basın.
 | `sanal_trader.py` | Çoklu strateji, otomatik rotasyonlu sanal alım-satım motoru (bkz. "Sanal Trader" bölümü). |
 | `tarama_desenler.py` | Yeni desen stratejilerini rastgele-kontrol-grubuyla doğrular. |
 | `calistir_sanal_trader.bat` | Çift tıklayınca Sanal Trader'ı başlatan kısayol. |
+| `.github/workflows/sanal_trader.yml` | GitHub Actions: bilgisayar kapalıyken saatte bir otomatik çalıştırır. |
+| `requirements-sanal-trader.txt` | Sadece Sanal Trader'ın (GitHub Actions gibi başsız ortamlarda) ihtiyaç duyduğu dar kütüphane listesi. |
+| `.gitignore` | Git'e hangi dosyaların gönderilmeyeceği (sanal ortam, indirilen veri vb.). |
 | `haberler.py` | 9 kaynaktan RSS ile haber toplama, coin etiketleme. |
 | `veri_kaynaklari.py` | Yavaş değişen veriler (CoinGecko, korku endeksi, fonlama). |
 | `uygulamayi_baslat.bat` | Paneli tarayıcıda açar (hata ayıklamak için). |
@@ -789,10 +792,54 @@ gerçek piyasa verisiyle ama SANAL parayla, şeffaf bir şekilde kaydetmek —
 tam olarak istediğiniz "bu gerçekten işe yarıyor mu, ne kadar işe
 yarıyor, dürüstçe görebileyim" sorusuna cevap vermek için.
 
+### Bilgisayarınız kapalıyken de 7/24 çalışsın (GitHub Actions)
+
+`calistir_sanal_trader.bat`, bilgisayarınız AÇIKKEN çalışır. Kapatırsanız
+durur. Bilgisayarınız kapalıyken de sürekli çalışmasını istiyorsanız,
+kodun GitHub'ın kendi (ücretsiz) sunucularında saatte bir otomatik
+çalışmasını sağlayabilirsiniz — `.github/workflows/sanal_trader.yml`
+bunun için hazır.
+
+**Nasıl çalışır:** GitHub, deponuzu saatte bir (her saat 5. dakikada)
+geçici bir sunucuda açar, `python sanal_trader.py --once` ile TEK bir
+kontrol turu çalıştırır (rotasyon zamanıysa rotasyon da dahil), sonra
+`cikti/sanal_trader/` içindeki güncellenmiş dosyaları (portföy, açık
+pozisyonlar, işlem/rotasyon geçmişi) depoya geri kaydeder ve sunucuyu
+kapatır. Panel bu depodan senkronize edilen dosyaları okur.
+
+**Kurulum adımları:**
+1. [github.com](https://github.com) üzerinde ücretsiz bir hesabınız
+   yoksa oluşturun.
+2. Yeni, **herkese açık (public)** bir depo (repository) oluşturun
+   (isim serbest, örn. `kaan-trade`). **Neden public:** GitHub Actions
+   dakikaları public depolarda tamamen ücretsiz/sınırsızdır; private
+   depolarda aylık 2.000 dakikayla sınırlıdır ve bu sistemin saatlik
+   taraması (40 coin × 19 strateji) bu sınırı aşar. Depoda hiçbir API
+   anahtarı, şifre ya da kişisel bilgi YOK — sadece kod ve sanal
+   (gerçek olmayan) işlem sonuçları paylaşılır.
+3. Depoyu oluşturduktan sonra GitHub'ın size gösterdiği adresi
+   (`https://github.com/kullanici-adiniz/depo-adi.git`) bana verin,
+   ben projeyi oraya göndereyim (push edeyim).
+4. Depo ayarlarında (Settings → Actions → General → Workflow
+   permissions) **"Read and write permissions"** seçeneğinin işaretli
+   olduğundan emin olun — GitHub Actions'ın sonuçları depoya geri
+   yazabilmesi için gerekli.
+5. Bu kadar — Actions sekmesinden saatte bir otomatik çalıştığını
+   görebilirsiniz, ya da "Run workflow" ile hemen elle tetikleyebilirsiniz.
+
+**Sınırlama:** Panel (Streamlit uygulaması) hâlâ sizin bilgisayarınızda
+çalışır — bu adım sadece `sanal_trader.py`'yi bilgisayarınızdan
+bağımsızlaştırır. Paneli görmek istediğinizde bilgisayarınızı açıp
+`git pull` ile en güncel sonuçları indirmeniz (ya da uygulamayı
+açmanız) yeterli; panel kendisi 7/24 açık kalmaz, sadece veriler
+GitHub'da birikir.
+
 ### Sanal Trader'ı sıfırlamak istersem?
 
-`cikti/sanal_trader/` klasörünü silin. Bir sonraki çalıştırmada
-`baslangic_bakiye` ile yeniden başlar.
+Yerel `cikti/sanal_trader/` klasörünü silin. GitHub Actions
+kullanıyorsanız, depodaki `cikti/sanal_trader/` klasörünü de silip
+commit'leyin. Bir sonraki çalıştırmada `baslangic_bakiye` ile yeniden
+başlar.
 
 ---
 
