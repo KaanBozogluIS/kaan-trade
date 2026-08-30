@@ -621,8 +621,18 @@ def bir_dongu(portfoy, durum, depo, a):
     hem tek-seferlik modun (main_tek_seferlik -- GitHub Actions gibi
     bir zamanlayicidan her tetiklendiginde bir kez calisir) icinde
     AYNEN kullanilir -- iki modun DAVRANISI ayni kalsin diye tek yerde.
+
+    ROTASYON, saati gelmemis olsa BILE, eger su an HICBIR coine
+    strateji atanmamissa YINE DE denenir. NEDEN: "son_rotasyon" zaman
+    damgasi, o rotasyonun SONUCU BOS cikmis olsa bile yazilir --
+    yoksa (bir onceki calisma bos donduyse) sistem "vakti gelmedi"
+    diyerek BOS durumu bir sonraki saate kadar hicbir sey yapmadan
+    tasir, kendi kendini asla duzeltemez. Bos bir atama zaten
+    "izlenecek hicbir sey yok" demek oldugu icin, zamanindan once
+    tekrar denemenin bir sakincasi yok.
     """
-    if rotasyon_zamani_mi(durum, a):
+    atama_yok = not (durum or {}).get("pozisyon_stratejileri")
+    if rotasyon_zamani_mi(durum, a) or atama_yok:
         durum = rotasyonu_uygula(portfoy, durum, depo, a)
 
     atamalar = (durum or {}).get("pozisyon_stratejileri", {})
