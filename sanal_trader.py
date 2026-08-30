@@ -56,6 +56,7 @@ Durdurmak icin: klavyeden Ctrl + C
 
 import csv
 import json
+import os
 import sys
 import time
 from datetime import datetime, timezone
@@ -81,6 +82,26 @@ except Exception:
 def al(sozluk, anahtar):
     """Sozlukten guvenli okuma: yoksa None doner, cokmez."""
     return sozluk.get(anahtar) if sozluk else None
+
+
+def _atomik_yaz(yol, metin):
+    """
+    Bir dosyayi ATOMIK olarak yazar: once gecici bir dosyaya yazip,
+    sonra isim degistirerek (os.replace) hedefin yerine koyar.
+
+    NEDEN GEREKLI: sanal_trader.py (bu surec) bu dosyalari saniyede
+    birkac kez yazarken, panel (uygulama.py, AYRI bir surec) AYNI ANDA
+    okuyabilir. Duz write_text() ONCE dosyayi BOSALTIP sonra icerigi
+    yazar -- panel TAM o arada okursa BOS ya da YARIM (bozuk) JSON
+    gorur ve cokmese bile "veri okunamadi" hatasi verir (gercekten
+    yasandi -- bkz. git gecmisi). os.replace() ise TEK bir adimda
+    "eski dosyanin YERINE yenisini koy" yapar -- okuyan taraf ya
+    TAMAMEN ESKI ya da TAMAMEN YENI icerigi gorur, YARIM asla.
+    """
+    yol.parent.mkdir(parents=True, exist_ok=True)
+    gecici = yol.with_suffix(yol.suffix + ".tmp")
+    gecici.write_text(metin, encoding="utf-8")
+    os.replace(gecici, yol)
 
 
 # ============================================================
@@ -139,6 +160,12 @@ POZISYON_DOSYASI = CIKTI_KLASORU / "pozisyonlar.json"
 ISLEM_DOSYASI = CIKTI_KLASORU / "islemler.csv"
 ROTASYON_DOSYASI = CIKTI_KLASORU / "rotasyon_gunlugu.csv"
 DURUM_DOSYASI = CIKTI_KLASORU / "durum.json"
+# Sadece ROTASYON SURERKEN var olan, gecici bir "calisiyorum" isareti.
+# Ilk rotasyon (40 coin x 19 strateji) birkac dakika surer ve o sure
+# boyunca DURUM_DOSYASI HENUZ yazilmamis olur -- bu dosya olmadan panel
+# (ve konsoldan izleyen kullanici) "hicbir sey olmuyor mu?" diye
+# tereddut eder. Rotasyon bitince silinir (bkz. rotasyonu_uygula).
+CALISMA_DOSYASI = CIKTI_KLASORU / "calisma_durumu.json"
 
 
 # ============================================================
@@ -163,13 +190,12 @@ class Portfoy:
         self.islem_sayisi = 0
 
     def kaydet(self):
-        CIKTI_KLASORU.mkdir(parents=True, exist_ok=True)
-        PORTFOY_DOSYASI.write_text(json.dumps({
+        _atomik_yaz(PORTFOY_DOSYASI, json.dumps({
             "nakit": self.nakit, "baslangic": self.baslangic,
             "islem_sayisi": self.islem_sayisi,
-        }, indent=2), encoding="utf-8")
-        POZISYON_DOSYASI.write_text(
-            json.dumps(self.pozisyonlar, indent=2, ensure_ascii=False), encoding="utf-8")
+        }, indent=2))
+        _atomik_yaz(POZISYON_DOSYASI,
+                    json.dumps(self.pozisyonlar, indent=2, ensure_ascii=False))
 
     @classmethod
     def yukle(cls, baslangic_bakiye):
@@ -203,12 +229,18 @@ class Portfoy:
         self.pozisyonlar[sembol] = {
             "miktar": miktar, "strateji": strateji, "giris_fiyat": fiyat,
             "giris_zamani": datetime.now(timezone.utc).isoformat(),
+            "maliyet": tutar,  # nakitten cikan TAM tutar (ucret dahil) -- kapat()'ta kar/zarar buna gore hesaplanir
         }
         self.islem_sayisi += 1
         return {"miktar": miktar, "tutar": tutar, "ucret": ucret}
 
     def kapat(self, sembol, fiyat, ucret_yuzde):
-        """Elimizdeki <sembol> pozisyonunun TAMAMINI satar (sanal)."""
+        """
+        Elimizdeki <sembol> pozisyonunun TAMAMINI satar (sanal) ve bu
+        ISLEMIN kar/zararini hesaplar -- "hangi strateji ne zaman
+        kazandirdi/kaybettirdi" sorusuna cevap vermek icin (bkz.
+        islem_kaydet, panelde "Strateji performansı" tablosu).
+        """
         pozisyon = self.pozisyonlar.get(sembol)
         if not pozisyon:
             return None
@@ -219,7 +251,12 @@ class Portfoy:
         self.nakit += net
         del self.pozisyonlar[sembol]
         self.islem_sayisi += 1
-        return {"miktar": miktar, "tutar": net, "ucret": ucret}
+
+        maliyet = pozisyon.get("maliyet") or (miktar * pozisyon.get("giris_fiyat", fiyat))
+        kar_zarar = net - maliyet
+        kar_zarar_yuzde = (kar_zarar / maliyet * 100) if maliyet else 0.0
+        return {"miktar": miktar, "tutar": net, "ucret": ucret,
+               "kar_zarar": kar_zarar, "kar_zarar_yuzde": kar_zarar_yuzde}
 
     def toplam_deger(self, fiyatlar):
         """fiyatlar: {sembol: fiyat} -- elimizdeki her pozisyon icin gerekir."""
@@ -253,7 +290,17 @@ def evreni_sec(depo, a):
     """
     semboller = depo.semboller(a["en_az_hacim"])
     semboller = [s for s in semboller if s.split("/")[0] not in _STABILCOIN_KODLARI]
-    return semboller[:a["evren_boyutu"]]
+    evren = semboller[:a["evren_boyutu"]]
+    if not evren:
+        # BOS EVREN SESSIZCE GECILMEMELI -- rotasyon o zaman hicbir sey
+        # yapmaz, hicbir hata da vermez (STRATEJILER_TUMU zaten bos
+        # listede donmez) ve kullanici "neden hicbir islem olmuyor?"
+        # sorusuna asla cevap bulamaz. GitHub Actions gibi baska bir
+        # ag/bolgeden calisirken bazi borsalar (ozellikle Binance)
+        # BULUT SAGLAYICI IP araliklarini engelleyebilir -- bu durumda
+        # depo.durum["hata"] genelde ipucu tasir.
+        print(f"[!] UYARI: likit evren BOS (0 coin) -- depo.durum: {depo.durum}")
+    return evren
 
 
 # ============================================================
@@ -284,6 +331,13 @@ _STRATEJI_SOZLUGU = {isim: (fn, params, isinma) for isim, fn, params, isinma in 
 #  5) ROTASYON: HER COIN ICIN EN IYI STRATEJIYI SEC
 # ============================================================
 
+def _calisma_durumu_kaydet(ilerleme, toplam):
+    _atomik_yaz(CALISMA_DOSYASI, json.dumps({
+        "asama": "rotasyon", "ilerleme": ilerleme, "toplam": toplam,
+        "guncelleme": datetime.now(timezone.utc).isoformat(),
+    }))
+
+
 def rotasyonu_degerlendir(evren, a):
     """
     Evrendeki HER coin icin, butun stratejileri son <geriye_donuk_
@@ -291,12 +345,22 @@ def rotasyonu_degerlendir(evren, a):
 
     Donen: {sembol: {"strateji", "getiri", "dusus", "piyasada"}}, ve
     ayrica her coin icin en iyi 5 adayin ozeti (gunluge yazmak icin).
+
+    ONEMLI: bu, evren buyukse (40 coin x 19 strateji = 760 istek)
+    BIRKAC DAKIKA surebilir. O sure boyunca hem konsola ("X/40 coin
+    tarandi") hem CALISMA_DOSYASI'na ilerleme yazilir -- aksi halde
+    ilk calistirmada kullanici "hicbir sey olmuyor, takildi mi?" diye
+    dusunur (bu, gercekten yasanan bir kafa karisikligiydi).
     """
     pencere_mum = _gun_to_mum(a["geriye_donuk_pencere_gun"], a["zaman_dilimi"])
     atamalar = {}
     gunluk_satirlari = []
+    toplam = len(evren)
 
-    for coin in evren:
+    for i, coin in enumerate(evren):
+        if i % 5 == 0 or i == toplam - 1:
+            print(f"   ... {i}/{toplam} coin tarandi ({coin})")
+        _calisma_durumu_kaydet(i, toplam)
         sonuclar = []
         for isim, fn, params, isinma in _STRATEJILER_TUMU:
             gerekli_mum = isinma + pencere_mum + 15
@@ -363,8 +427,7 @@ def durumu_yukle():
 
 
 def durumu_kaydet(durum):
-    CIKTI_KLASORU.mkdir(parents=True, exist_ok=True)
-    DURUM_DOSYASI.write_text(json.dumps(durum, indent=2, ensure_ascii=False), encoding="utf-8")
+    _atomik_yaz(DURUM_DOSYASI, json.dumps(durum, indent=2, ensure_ascii=False))
 
 
 def rotasyonu_uygula(portfoy, durum, depo, a):
@@ -380,6 +443,27 @@ def rotasyonu_uygula(portfoy, durum, depo, a):
     evren = evreni_sec(depo, a)
     print(f"[i] Rotasyon: {len(evren)} coinlik likit evren, "
           f"{len(_STRATEJILER_TUMU)} strateji ile test ediliyor...")
+
+    if evren:
+        # HIZLI TEYIT: gecmis mum verisi cekmek (rotasyonun butun
+        # temeli) gercekten calisiyor mu? 760 istegin HEPSI sessizce
+        # basarisiz olabilir (bkz. veri_kaynaklari.mum_verisi -- HER
+        # hatada None doner, hicbir sey yazdirmaz) ve sonuc BOS bir
+        # rotasyon olur, HICBIR ACIKLAMA olmadan. Ana dongudeki 760
+        # denemeden ONCE, TEK bir denemeyle ("kanarya") sorunu erken
+        # ve ACIKCA yakaliyoruz -- ozellikle GitHub Actions gibi baska
+        # bir sunucudan calisirken bazi borsalar (Binance dahil) bulut
+        # saglayici IP araliklarini engelleyebilir.
+        deneme = vk.mum_verisi(evren[0], a["zaman_dilimi"], 50)
+        if deneme is None:
+            print(f"[!] TEYIT BASARISIZ: {evren[0]} icin mum verisi alinamadi. "
+                  "Muhtemel sebep: bu sunucunun IP adresi borsa tarafindan "
+                  "engellenmis olabilir (GitHub Actions gibi bulut "
+                  "saglayicilarda bilinen bir sorun) ya da gecici bir ag "
+                  "sorunu var. Rotasyonun geri kalani da basarisiz olabilir.")
+        else:
+            print(f"[i] Teyit basarili: {evren[0]} icin {len(deneme)} mum alindi.")
+
     atamalar, gunluk_satirlari = rotasyonu_degerlendir(evren, a)
     rotasyon_kaydet(atamalar, gunluk_satirlari)
 
@@ -395,6 +479,7 @@ def rotasyonu_uygula(portfoy, durum, depo, a):
         "son_rotasyon": datetime.now(timezone.utc).isoformat(),
     }
     durumu_kaydet(yeni_durum)
+    CALISMA_DOSYASI.unlink(missing_ok=True)  # "rotasyon calisiyor" isareti artik gecerli degil
     print(f"[i] ROTASYON TAMAMLANDI: {len(yeni_atamalar)} coin icin strateji atandi.")
     return yeni_durum
 
@@ -404,12 +489,20 @@ def rotasyonu_uygula(portfoy, durum, depo, a):
 # ============================================================
 
 def islem_kaydet(saat, islem, strateji, sembol, fiyat, sonuc, portfoy, fiyatlar, sebep):
+    """
+    "kar_zarar"/"kar_zarar_yuzde" sutunlari SADECE SAT satirlarinda
+    doludur (Portfoy.kapat()'in dondurdugu sonuc'ta bulunur) -- AL
+    satirlarinda bos kalir, cunku bir alim ANINDA henuz kar/zarar
+    yoktur. Boylece panelde "hangi strateji, hangi coin'de, ne zaman,
+    kar mi zarar mi etti" dogrudan bu tablodan okunabilir.
+    """
     CIKTI_KLASORU.mkdir(parents=True, exist_ok=True)
     yeni_dosya = not ISLEM_DOSYASI.exists()
     with ISLEM_DOSYASI.open("a", newline="", encoding="utf-8-sig") as f:
         yazici = csv.DictWriter(f, fieldnames=[
             "tarih", "islem", "strateji", "sembol", "fiyat", "miktar",
-            "tutar", "ucret", "nakit", "portfoy_degeri", "sebep",
+            "tutar", "ucret", "kar_zarar", "kar_zarar_yuzde", "nakit",
+            "portfoy_degeri", "sebep",
         ])
         if yeni_dosya:
             yazici.writeheader()
@@ -417,6 +510,8 @@ def islem_kaydet(saat, islem, strateji, sembol, fiyat, sonuc, portfoy, fiyatlar,
             "tarih": saat, "islem": islem, "strateji": strateji, "sembol": sembol,
             "fiyat": round(fiyat, 6), "miktar": round(sonuc["miktar"], 8),
             "tutar": round(sonuc["tutar"], 2), "ucret": round(sonuc["ucret"], 4),
+            "kar_zarar": round(sonuc["kar_zarar"], 2) if "kar_zarar" in sonuc else "",
+            "kar_zarar_yuzde": round(sonuc["kar_zarar_yuzde"], 2) if "kar_zarar_yuzde" in sonuc else "",
             "nakit": round(portfoy.nakit, 2),
             "portfoy_degeri": round(portfoy.toplam_deger(fiyatlar), 2), "sebep": sebep,
         })
@@ -559,6 +654,14 @@ def _canli_veriye_baglan():
         if depo.durum.get("ilk_dolum"):
             break
         time.sleep(1)
+    if not depo.durum.get("ilk_dolum"):
+        # BASARISIZ oldugunu ACIKCA yazdiriyoruz -- aksi halde
+        # sembol_sayisi=0 ile sessizce devam edip evreni_sec BOS
+        # doner, hicbir islem yapilmaz ve loglarda NEDEN bulunamaz.
+        # Bazi borsalar (ozellikle Binance) bulut saglayici IP
+        # araliklarini (AWS/GCP/Azure -- GitHub Actions da Azure
+        # kullanir) engelleyebilir; hata mesaji genelde bunu gosterir.
+        print(f"[!] ILK DOLUM BASARISIZ OLDU -- depo.durum: {depo.durum}")
     print(f"[i] Baglandi -- {depo.durum.get('sembol_sayisi', 0)} coin izleniyor.")
     return depo
 

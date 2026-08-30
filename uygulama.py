@@ -25,9 +25,10 @@ st.set_page_config(page_title="kaan-trade", page_icon="📊",
 
 import html
 import json
+import subprocess
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pandas as pd
 
@@ -1900,6 +1901,90 @@ def _sanal_trader_egri_verisi(islemler):
     return pd.DataFrame({"zaman": zamanlar, "deger": degerler}).sort_values("zaman")
 
 
+def _sanal_trader_bulut_ile_senkronize_et():
+    """
+    GitHub Actions BULUTTA (bilgisayarınız kapalıyken de) çalışıp
+    sonuçları `git commit` ile depoya yazıyor -- ama bu YEREL kopya
+    o değişiklikleri kendiliğinden GÖRMEZ, "git pull" çalıştırılması
+    gerekir. Kullanıcının yaşadığı "bilgisayarı kapatınca işlemler
+    gidiyor" hissi aslında budur: işlemler kaybolmuyor, sadece bulutta
+    -- yerel panel onlardan habersiz kalıyor. Bu düğme o boşluğu kapatır.
+    """
+    try:
+        sonuc = subprocess.run(
+            ["git", "pull", "--ff-only"], cwd=strd.KLASOR,
+            capture_output=True, text=True, timeout=30)
+    except FileNotFoundError:
+        st.error("Git bulunamadı -- bu bilgisayarda git kurulu olmayabilir.")
+        return
+    except Exception as e:
+        st.error(f"Senkronize edilemedi: {e}")
+        return
+
+    if sonuc.returncode == 0:
+        # BILEREK st.rerun() YOK: bu fonksiyon _sanal_trader_icerik'in
+        # EN BASINDA cagriliyor, dosyalar disk uzerinde zaten guncellendi
+        # -- fonksiyonun devami (asagidaki okumalar) AYNI calisma
+        # icinde zaten TAZE veriyi okuyacak. st.rerun() cagirmak, bu
+        # basari mesajini goruntulenmeden hemen silerdi.
+        cikti = sonuc.stdout.strip()
+        if "Already up to date" in cikti or "zaten güncel" in cikti.lower():
+            st.success("Zaten güncel — bulutta yeni bir şey yok.")
+        else:
+            st.success("Bulutla senkronize edildi, en güncel sonuçlar aşağıda.")
+    else:
+        st.error(
+            "Senkronize edilemedi -- muhtemelen bu klasör GitHub'a "
+            "bağlı bir git deposu değil, ya da yerel değişiklikler "
+            "çakışıyor.\n\n" + (sonuc.stderr.strip() or ""))
+
+
+def _sanal_trader_ilk_calisma_durumu():
+    """
+    DURUM_DOSYASI henuz yokken gosterilir. Ilk rotasyon (40 coin x 19
+    strateji taramasi) birkac dakika surer -- bu sure boyunca eskiden
+    burada duz bir "henuz calismadi" yazisi vardi, kullanici bot.py'yi
+    baslatip birkac dakika bekledikten sonra bile ayni yaziyi gorunce
+    "calismiyor" saniyordu. Simdi sanal_trader.py'nin yazdigi GECICI
+    calisma_durumu.json'u okuyup GERCEK ilerlemeyi gosteriyoruz.
+    """
+    if not strd.CALISMA_DOSYASI.exists():
+        st.info(
+            "Sanal trader henüz çalışmadı. Başlatmak için klasördeki "
+            "**calistir_sanal_trader.bat** dosyasına çift tıklayın — "
+            "bilgisayar açıkken arka planda 7/24 çalışır, bu sayfa onun "
+            "kararlarını gösterir.")
+        return
+
+    try:
+        calisma = json.loads(strd.CALISMA_DOSYASI.read_text(encoding="utf-8"))
+        guncelleme = datetime.fromisoformat(calisma["guncelleme"])
+        eskilik_saniye = (datetime.now(timezone.utc) - guncelleme).total_seconds()
+    except Exception:
+        st.info("Sanal trader başlatılıyor, birazdan burada görünecek…")
+        return
+
+    if eskilik_saniye > 600:
+        st.warning(
+            "Bir tarama başlamıştı ama 10 dakikadan uzun süredir "
+            "ilerlemiyor — süreç yarıda kesilmiş olabilir (bilgisayar "
+            "uykuya geçti, konsol kapatıldı vb.). **calistir_sanal_"
+            "trader.bat**'ı tekrar çalıştırmayı deneyin.")
+        return
+
+    ilerleme, toplam = calisma.get("ilerleme", 0), calisma.get("toplam", 1)
+    st.info(
+        f"**İlk tarama sürüyor** — {ilerleme}/{toplam} coin test edildi. "
+        "Bu, evrendeki her coin için tüm stratejileri geçmiş veriyle "
+        "ölçtüğü için birkaç dakika sürer (tek seferlik bir bekleme — "
+        "sonraki rotasyonlar bu kadar sürmez, aynı anda sadece o an açık "
+        "olan pozisyonlar kontrol edilir). Bu sayfayı birkaç dakika sonra "
+        "yeniden açın ya da aşağıdaki düğmeyle şimdi kontrol edin.")
+    st.progress(ilerleme / toplam if toplam else 0.0)
+    if st.button("Yenile", key="sanal_trader_ilk_yenile"):
+        st.rerun()
+
+
 def _sanal_trader_icerik(depo):
     """
     Statik routing'den cagirilir (bkz. dosyanin yukarisindaki uzun not --
@@ -1926,12 +2011,22 @@ def _sanal_trader_icerik(depo):
         "yakın geçmişte iyi gideni kovalama riski taşır. Bu bir kâr aracı "
         "değil, şeffaf bir gözlem aracıdır.")
 
+    ust = st.columns([5, 2])
+    with ust[0]:
+        st.caption(
+            "🌐 **7/24 çalışan asıl sistem GitHub Actions'ta** (bilgisayarınız "
+            "kapalıyken de saatte bir çalışır). Bu panel ise **yerel bir "
+            "kopyayı** gösterir — bulutta olanları görmek için sağdaki "
+            "düğmeyle senkronize edin. `calistir_sanal_trader.bat`'ı AYRICA "
+            "çalıştırırsanız bu, buluttakinden **bağımsız, ayrı bir "
+            "portföy** oluşturur — ikisini birden çalıştırmayın, karışır.")
+    with ust[1]:
+        if st.button("☁️ Bulutla senkronize et", key="sanal_trader_senkronize",
+                     width="stretch"):
+            _sanal_trader_bulut_ile_senkronize_et()
+
     if not strd.DURUM_DOSYASI.exists():
-        st.info(
-            "Sanal trader henüz çalışmadı. Başlatmak için klasördeki "
-            "**calistir_sanal_trader.bat** dosyasına çift tıklayın — "
-            "bilgisayar açıkken arka planda 7/24 çalışır, bu sayfa onun "
-            "kararlarını gösterir.")
+        _sanal_trader_ilk_calisma_durumu()
         return
 
     try:
@@ -2031,8 +2126,52 @@ def _sanal_trader_icerik(depo):
         st.markdown('<div class="bolum-basligi" style="margin-top:14px;">İşlem geçmişi</div>',
                     unsafe_allow_html=True)
         st.caption("Her satır: ne zaman, hangi stratejinin sinyaliyle, hangi coin'den "
-                   "aldı/sattı — hepsi burada.")
-        st.dataframe(islemler.sort_values("tarih", ascending=False), width="stretch", hide_index=True)
+                   "aldı/sattı, kârla mı zararla mı kapandı — hepsi burada.")
+        st.dataframe(islemler.sort_values("tarih", ascending=False), width="stretch", hide_index=True,
+                    column_config={
+                        "kar_zarar": st.column_config.NumberColumn("Kâr/zarar $", format="%+.2f"),
+                        "kar_zarar_yuzde": st.column_config.NumberColumn("Kâr/zarar %", format="%+.2f%%"),
+                    })
+
+        # --- Strateji performans ozeti (SADECE kapanan islemler) ----
+        kapanan = islemler[islemler["islem"].astype(str).str.startswith("SAT")].copy()
+        if "kar_zarar" in kapanan.columns:
+            kapanan["kar_zarar"] = pd.to_numeric(kapanan["kar_zarar"], errors="coerce")
+            kapanan["kar_zarar_yuzde"] = pd.to_numeric(kapanan.get("kar_zarar_yuzde"), errors="coerce")
+            kapanan = kapanan.dropna(subset=["kar_zarar"])
+        else:
+            kapanan = kapanan.iloc[0:0]  # eski (kar_zarar sutunu olmayan) islem gecmisi -- gosterilecek bir sey yok
+
+        if not kapanan.empty:
+            st.markdown('<div class="bolum-basligi" style="margin-top:14px;">'
+                        'Strateji performansı (kapanan işlemler)</div>', unsafe_allow_html=True)
+            st.caption(
+                "Her stratejinin ŞİMDİYE KADAR KAPATTIĞI işlemlerin özeti — hangisi ne "
+                "sıklıkla kârla/zararla kapanmış, ortalama getirisi ne. **Az sayıda işlemle "
+                "(1-2 gibi) çıkan bir sonuç güvenilir değildir** — birkaç işlemlik bir "
+                "örneklem şans eseri de olabilir, tıpkı `tarama.py`'de anlattığımız gibi.")
+            ozet = (kapanan.groupby("strateji")
+                   .agg(kapanan_islem=("kar_zarar", "count"),
+                        kazanan=("kar_zarar", lambda s: int((s > 0).sum())),
+                        ortalama_yuzde=("kar_zarar_yuzde", "mean"),
+                        toplam=("kar_zarar", "sum"))
+                   .reset_index())
+            ozet["kazanma_orani"] = ozet["kazanan"] / ozet["kapanan_islem"] * 100
+            ozet = ozet.sort_values("toplam", ascending=False)
+            ozet = ozet.rename(columns={
+                "strateji": "Strateji", "kapanan_islem": "Kapanan işlem",
+                "kazanan": "Kazanan", "kazanma_orani": "Kazanma oranı %",
+                "ortalama_yuzde": "Ort. getiri %", "toplam": "Toplam kâr/zarar $",
+            })
+            st.dataframe(
+                ozet[["Strateji", "Kapanan işlem", "Kazanan", "Kazanma oranı %",
+                     "Ort. getiri %", "Toplam kâr/zarar $"]],
+                width="stretch", hide_index=True,
+                column_config={
+                    "Kazanma oranı %": st.column_config.NumberColumn(format="%.0f%%"),
+                    "Ort. getiri %": st.column_config.NumberColumn(format="%+.2f%%"),
+                    "Toplam kâr/zarar $": st.column_config.NumberColumn(format="%+.2f"),
+                })
     else:
         st.info("Henüz hiç sanal işlem yapılmadı — atanmış stratejilerin sinyal vermesi bekleniyor.")
 
