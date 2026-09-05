@@ -1,0 +1,58 @@
+{
+  "BTC/USDT": {
+    "miktar": 0.001490679424995602,
+    "strateji": "SMA trend 100",
+    "giris_fiyat": 79582.0,
+    "giris_zamani": "2026-09-05T04:23:44.127841+00:00",
+    "maliyet": 118.75
+  },
+  "ETH/USDT": {
+    "miktar": 0.04871726941656381,
+    "strateji": "MA kesisme 50/200",
+    "giris_fiyat": 2452.49,
+    "giris_zamani": "2026-09-05T04:23:44.305713+00:00",
+    "maliyet": 119.59821428571429
+  },
+  "ZEC/USDT": {
+    "miktar": 0.1175599598018688,
+    "strateji": "SMA trend 200",
+    "giris_fiyat": 1024.79,
+    "giris_zamani": "2026-09-05T04:23:44.481166+00:00",
+    "maliyet": 120.59486607142856
+  },
+  "BNB/USDT": {
+    "miktar": 0.1681787589907682,
+    "strateji": "SMA trend 200",
+    "giris_fiyat": 723.51,
+    "giris_zamani": "2026-09-05T04:23:45.410845+00:00",
+    "maliyet": 121.80081473214284
+  },
+  "PROM/USDT": {
+    "miktar": 24.034335074400765,
+    "strateji": "Donchian 55/20",
+    "giris_fiyat": 5.126,
+    "giris_zamani": "2026-09-05T04:23:45.753763+00:00",
+    "maliyet": 123.32332491629464
+  },
+  "NEAR/USDT": {
+    "miktar": 56.29363368594816,
+    "strateji": "Dusuk oynaklik",
+    "giris_fiyat": 2.225,
+    "giris_zamani": "2026-09-05T04:23:45.932575+00:00",
+    "maliyet": 125.37871366489956
+  },
+  "DASH/USDT": {
+    "miktar": 1.9332128945191316,
+    "strateji": "Donchian 20/10",
+    "giris_fiyat": 66.41,
+    "giris_zamani": "2026-09-05T04:23:46.677617+00:00",
+    "maliyet": 128.51318150652205
+  },
+  "ZKC/USDT": {
+    "miktar": 2690.696641542241,
+    "strateji": "Fair Value Gap",
+    "giris_fiyat": 0.0501,
+    "giris_zamani": "2026-09-05T04:23:46.850979+00:00",
+    "maliyet": 134.93884058184813
+  }
+}
