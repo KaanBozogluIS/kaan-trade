@@ -1,5 +1,12 @@
 name: Sanal Trader
 
+# PASIF (2026-09-12): bu proje Trade-ajani deposu altina tasindi
+# (kaan_trade_panel/) ve Sanal Trader artik ORADAKI ayni isimli workflow
+# tarafindan calistiriliyor. Ayni mantiksal portfoyun IKI ayri yerde
+# calisip catallasmasini onlemek icin buradaki zamanlanmis tetikleyici
+# KALDIRILDI -- dosya arsiv/geri-donus amaciyla siliniyor degil, sadece
+# elle (workflow_dispatch) tetiklenebilir durumda birakiliyor.
+#
 # NE YAPAR: sanal_trader.py'yi periyodik olarak (varsayilan saatte bir)
 # TEK SEFERLIK modda calistirir (--once), sonuclari (portfoy, pozisyonlar,
 # islem/rotasyon gecmisi) depoya geri yazar. Boylece bilgisayariniz kapali
@@ -11,11 +18,7 @@ name: Sanal Trader
 # sadece HERKESE ACIK piyasa verisini okuyor (bkz. veri_kaynaklari.py).
 
 on:
-  schedule:
-    # Her saat 5. dakikada -- tam saat basinda (00) degil, GitHub'in
-    # yogunlugu dagitmak icin onerdigi gibi birkac dakika kaydirilmis.
-    - cron: "5 * * * *"
-  workflow_dispatch: {}   # Actions sekmesinden elle de tetiklenebilsin
+  workflow_dispatch: {}   # Actions sekmesinden elle de tetiklenebilsin (otomatik cron KALDIRILDI, bkz. yukarida)
 
 permissions:
   contents: write   # sonuclari depoya geri commitleyebilmek icin
