@@ -38,6 +38,7 @@ import grafikler as gr
 import haberler as hb
 import sanal_trader as strd
 import veri_kaynaklari as vk
+import trade_ajani_stratejileri as taj
 from stratejiler import atr, rsi
 
 # ============================================================
@@ -1786,6 +1787,81 @@ def sayfa_analiz_botu(depo, sembol, en_az_hacim):
 
 
 # ============================================================
+#  TRADE AJANI  (ayri bir projeden aktarilan 4 dogrulanmis strateji)
+# ============================================================
+#
+# trade_ajani_stratejileri.py, "Trade-ajani" adli AYRI bir projede
+# (egitim/test - IS/OOS - ayrimli genis taramalarla dogrulanmis)
+# stratejilerin bu projenin kalibina (0.0=nakit, 1.0=pozisyonda,
+# LONG-only) uyarlanmis hali. Bu sayfa SADECE onlarin GUNCEL durumunu
+# gosterir - sanal_trader.py'yi (canli rotasyon botu) ETKILEMEZ, ayri
+# bir islevdir. Ayrintili bulgular: TRADE_AJANI_BULGULARI.md.
+#
+# Gunluk mum ile calisan Analiz Botu'nun aksine bu sayfa 1 SAATLIK mum
+# kullanir (stratejiler o zaman diliminde dogrulandi) - o yuzden bu da
+# CANLI PARCANIN DISINDA, sadece coin degistirince yenilenir.
+
+_TRADE_AJANI_DURUM_ETIKET = {
+    "LONG": ("🟢", "Pozisyonda (LONG)"),
+    "NAKIT": ("⚪", "Nakitte"),
+    "ISINIYOR": ("🟡", "Isınıyor (yetersiz geçmiş)"),
+}
+
+
+def _trade_ajani_pozisyon_ozeti(poz: pd.Series, zaman: pd.Series) -> dict:
+    gecerli = poz.dropna()
+    if gecerli.empty:
+        return {"durum": "ISINIYOR", "beri": None}
+    son = float(gecerli.iloc[-1])
+    degisim = gecerli[gecerli != gecerli.shift(1)]
+    ilk_idx = gecerli.index[0]
+    son_degisim_idx = degisim.index[-1] if len(degisim) else ilk_idx
+    return {"durum": "LONG" if son == 1.0 else "NAKIT", "beri": zaman.loc[son_degisim_idx]}
+
+
+def sayfa_trade_ajani(sembol):
+    kod = sembol.split("/")[0]
+    st.markdown('<div class="bolum-basligi">Trade Ajanı Stratejileri</div>', unsafe_allow_html=True)
+    st.info(
+        "Bu 4 strateji **ayrı bir projede** (Trade-ajanı), eğitim/test (IS/OOS) "
+        "ayrımlı genış taramalarla doğrulandı ve buraya (LONG-only kalıba "
+        "uyarlanarak) aktarıldı. **Kırılım-GeriÇekilme-Toparlanma** küçük/orta "
+        "ölçekli altcoinler, **Major Trend Sürücüsü** büyük/likit coinler için "
+        "tasarlandı — seçili coin ikisine de uymayabilir. Bu sayfa sanal_trader.py'yi "
+        "(canlı rotasyon botu) **etkilemez**. Ayrıntılı doğrulama sonuçları: "
+        "`TRADE_AJANI_BULGULARI.md`."
+    )
+
+    df = c_mumlar(sembol, "1h", 1000)
+    if df is None or len(df) < 250:
+        st.info(f"{kod} için 1 saatlik yeterli geçmiş veri yok, gösterilemiyor.")
+        return
+
+    ozetler = []
+    for isim, fn, params in taj.STRATEJILER:
+        try:
+            poz = fn(df, **params)
+            ozet = _trade_ajani_pozisyon_ozeti(poz, df["zaman"])
+            ozet["isim"], ozet["hata"] = isim, None
+        except Exception as exc:
+            ozet = {"isim": isim, "hata": str(exc), "durum": None, "beri": None}
+        ozetler.append(ozet)
+
+    kol = st.columns(len(ozetler))
+    for hedef, ozet in zip(kol, ozetler):
+        with hedef:
+            if ozet["hata"]:
+                st.error(f"**{ozet['isim']}**\n\nHata: {ozet['hata'][:80]}")
+                continue
+            simge, etiket = _TRADE_AJANI_DURUM_ETIKET[ozet["durum"]]
+            beri_metin = ozet["beri"].strftime("%Y-%m-%d %H:%M") if ozet["beri"] is not None else "—"
+            st.metric(ozet["isim"], f"{simge} {etiket}")
+            st.caption(f"beri: {beri_metin}")
+
+    st.caption(f"{kod} · 1 saatlik mumlar · son {len(df)} bar · coin değiştirince yenilenir.")
+
+
+# ============================================================
 #  SANAL TRADER  (coklu strateji, otomatik rotasyon)
 # ============================================================
 #
@@ -2296,7 +2372,7 @@ with nav[0]:
                unsafe_allow_html=True)
 with nav[1]:
     SAYFALAR = ["Piyasa", "Coin analizi", "Analiz Botu", "Sanal Trader",
-               "Karşılaştırma", "Haberler"]
+               "Karşılaştırma", "Haberler", "Trade Ajanı"]
     st.session_state.sayfa = st.radio(
         "Sayfa", SAYFALAR, index=SAYFALAR.index(st.session_state.sayfa),
         label_visibility="collapsed", horizontal=True)
@@ -2391,6 +2467,8 @@ elif st.session_state.sayfa == "Sanal Trader":
     _sanal_trader_icerik(depo)
 elif st.session_state.sayfa == "Karşılaştırma":
     sayfa_karsilastirma(depo, en_az_hacim)
+elif st.session_state.sayfa == "Trade Ajanı":
+    sayfa_trade_ajani(st.session_state.secili_coin)
 else:
     sayfa_haberler()
 
@@ -2410,6 +2488,10 @@ elif st.session_state.sayfa == "Sanal Trader":
                "dosyaları okur; \"Yenile\" düğmesiyle ya da sayfa/coin "
                "değiştirdiğinizde tazelenir. Tamamen sanal para kullanır, "
                "gerçek emir göndermez.")
+elif st.session_state.sayfa == "Trade Ajanı":
+    st.caption("Bu stratejiler ayrı bir projeden (Trade-ajanı) aktarıldı ve "
+               "canlı Sanal Trader botunu etkilemez. · 1 saatlik mumlarla "
+               "hesaplanır, coin değiştirince yenilenir. · Tavsiye değildir.")
 elif st.session_state.anlik:
     st.caption(f"Fiyat ve özet sayılar {st.session_state.aralik} saniyede "
                "bir canlı veriden yenileniyor. Grafikler ve tablolar siz "
